@@ -10,12 +10,17 @@ import math
 import argparse
 import functools
 import matplotlib
+
 matplotlib.use('Agg')
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import PyKDL as kd
+
+import rospy
+from sensor_msgs.msg import PointCloud2, PointField
+import sensor_msgs.point_cloud2 as pc2
 
 from bag_topic_def import *
 from bag_utils import *
@@ -47,6 +52,12 @@ BASE_LINK_TO_LIDAR_PED = [1.9, 0., 1.6]
 CAMERA_COLS = ["timestamp", "width", "height", "frame_id", "filename"]
 GPS_COLS = ["timestamp", "lat", "long", "alt"]
 POS_COLS = ["timestamp", "tx", "ty", "tz", "rx", "ry", "rz"]
+
+def get_outdir(base_dir, name=''):
+    outdir = os.path.join(base_dir, name)
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
+    return outdir
 
 
 def obs_name_from_topic(topic):
@@ -106,6 +117,15 @@ def tf2dict(timestamp, tf, tf_dict):
     tf_dict["rx"].append(rot_xyz[0])
     tf_dict["ry"].append(rot_xyz[1])
     tf_dict["rz"].append(rot_xyz[2])
+
+
+def points2dict(timestamp, msg, points_dict):
+    field_names = [field.name for field in msg.fields]
+    points = pc2.read_points(msg)
+    for point in points:
+        points_dict["timestamp"].append(timestamp)
+        for field_name, pt in zip(field_names, point):
+            points_dict[field_name].append(pt)
 
 
 def imu2dict(timestamp, msg, imu_dict):
@@ -233,7 +253,6 @@ def obstacle_rtk_to_pose(
         centroid_offset = kd.Vector(0, 0, obs_gps_to_centroid_v[2])
     res += centroid_offset
     return frame_to_dict(kd.Frame(obs_rot_z, res), yaw_only=True)
-
 
 def filter_outlier_points(points):
     kt = kdtree.KDTree(points)
@@ -662,6 +681,9 @@ def main():
         readers = bs.get_readers()
         stats_acc = defaultdict(int)
 
+        point_cols = ["timestamp", "x", "y", "z", "intensity", "ring"]
+        points_dict = defaultdict(list)
+
         def _process_msg(topic, msg, ts_recorded, stats):
             if topic == '/tf':
                 timestamp = msg.transforms[0].header.stamp.to_nsec()
@@ -717,6 +739,10 @@ def main():
                 pose2dict(timestamp, msg, obs_data[name]['pose'])
                 stats['msg_count'] += 1
 
+            elif topic in VELODYNE_TOPICS:
+                points2dict(timestamp, msg, points_dict)
+                stats['msg_count'] += 1
+
             else:
                 pass
 
@@ -741,6 +767,14 @@ def main():
         camera_df = pd.DataFrame(data=cap_data['camera'], columns=CAMERA_COLS)
         if include_images:
             camera_df.to_csv(os.path.join(outdir, 'cap_camera.csv'), index=False)
+
+        def init_and_save(data_dict, cols, filename):
+            df = pd.DataFrame(data=data_dict, columns=cols)
+            if len(df.index):
+                df.to_csv(os.path.join(outdir, filename), index=False)
+            return df
+
+        points_df = init_and_save(points_dict, point_cols, 'points.csv')
 
         if len(camera_df['timestamp']):
             # Interpolate samples from all used sensors to camera frame timestamps
