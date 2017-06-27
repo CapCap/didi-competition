@@ -59,7 +59,6 @@ def get_outdir(base_dir, name=''):
         os.makedirs(outdir)
     return outdir
 
-
 def obs_name_from_topic(topic):
     return topic.split('/')[2]
 
@@ -661,6 +660,8 @@ def main():
 
     filter_topics += obstacle_topics
 
+    filter_topics += VELODYNE_TOPICS # velodyne, yo
+
     bagsets = find_bagsets(indir, filter_topics=filter_topics, set_per_file=True, metadata_filename='metadata.csv')
     if not bagsets:
         print("No bags found in %s" % indir)
@@ -675,6 +676,9 @@ def main():
 
         outdir = os.path.join(base_outdir, bs.get_name(unique_paths))
         get_outdir(outdir)
+
+        points_outdir = get_outdir(outdir, 'points')
+
         if include_images:
             camera_outdir = get_outdir(outdir, "camera")
         bs.write_infos(outdir)
@@ -683,6 +687,8 @@ def main():
 
         point_cols = ["timestamp", "x", "y", "z", "intensity", "ring"]
         points_dict = defaultdict(list)
+
+        points_count = 0
 
         def _process_msg(topic, msg, ts_recorded, stats):
             if topic == '/tf':
